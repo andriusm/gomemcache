@@ -146,6 +146,8 @@ type Client struct {
 
 	selector ServerSelector
 
+	keyList []string
+
 	lk       sync.Mutex
 	freeconn map[string][]*conn
 }
@@ -715,4 +717,42 @@ func (c *Client) incrDecr(verb, key string, delta uint64) (uint64, error) {
 		return nil
 	})
 	return val, err
+}
+
+func (c *Client) GetKeyList() []string {
+	return c.keyList
+}
+
+func (c *Client) CrawlKeys() error {
+	c.keyList = make([]string, 1)
+	return c.selector.Each(c.crawl)
+}
+
+func (c *Client) crawl(addr net.Addr) error {
+	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+		if _, err := fmt.Fprintf(rw, "lru_crawler metadump all\r\n"); err != nil {
+			return err
+		}
+		if err := rw.Flush(); err != nil {
+			return err
+		}
+
+		for {
+			line, err := rw.ReadSlice('\n')
+			if err != nil {
+				return err
+			}
+			if bytes.Equal(line, resultEnd) {
+				return nil
+			}
+
+			arr := strings.Split(string(line), " ")
+			//arr = strings.Split(arr[0], "%3A")
+			arr = strings.Split(arr[0], "=")
+
+			c.keyList = append(c.keyList, strings.Replace(arr[1], "%3A", ":", -1))
+		}
+
+		return nil
+	})
 }
